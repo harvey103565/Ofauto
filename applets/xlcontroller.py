@@ -40,7 +40,7 @@ def XlController(*args):
                 timber.exception(exp)
                 ret_value = 2
             finally:
-                exit_call_back = app.Macro('OnExitCallBack')
+                exit_call_back = app.Macro('Migration.OnExitCallBack')
                 exit_call_back()
 
             exit(ret_value)

@@ -44,7 +44,6 @@ class XlMigrator(object):
     def __init__(self, app, sheet):
         self.summary = dict(zip(data_sequence, (0, 0, 0, 0, 0, 0, 0)))
         self.color_schema = dict(zip(data_sequence, color_names))
-        # self.explode_schema = dict(zip(data_sequence, (0.05, 0.05, 0.05, 0, 0, 0, 0)))
 
         self.xl_app = app
         self.xl_sheet = sheet
