@@ -12,3 +12,4 @@ from .xlneuro import Range
 from .charts import Chart
 from .charts import Charts
 from .macro import Macro
+from .address import Address
