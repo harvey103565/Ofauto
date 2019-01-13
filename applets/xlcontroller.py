@@ -10,14 +10,20 @@ from os import path
 from sys import exit
 
 from xloa import App
+from xloa import XlError
 
 
 def XlController(*args):
 
     def XlDecorator(cls):
-        app = App()
-        xl_book = app.Workbooks[path.basename(args[1])]
-        xl_sheet = xl_book.Worksheets[args[5]]
+        try:
+            app = App()
+            xl_book = app.Workbooks[path.basename(args[1])]
+            xl_sheet = xl_book.Worksheets[args[5]]
+        except com_error as e:
+            timber.critical('无法建立到Excel的联接，可能是由于Excel处于锁定，或系统占用状态，需重启电脑后重试。')
+        except XlError as e:
+            timber.exception(e)
 
         def __init__(XlHander):
             timber.info('XlHandler.__init__()')

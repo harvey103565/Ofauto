@@ -10,6 +10,7 @@ from timber import timber
 from .charts import Chart
 from .charts import Charts
 from .macro import Macro
+from .address import Address
 
 from .interior import ColorIndex
 from .interior import int_to_rgb
@@ -246,21 +247,314 @@ class Books(object):
         return Book(self.Open(file_name))
 
 
-class Sheet(object):
+class Range(object):
     """
-    Class represents Worksheet object in Workbook
+    Range object
     """
-    def __init__(self, impl):
+    def __init__(self, impl, item_step: tuple = None):
         self._impl = impl
+        self._row_count = impl.Rows.Count
+        self._column_count = impl.Columns.Count
+        self._item_step = item_step
 
     @property
     def Api(self):
         """
-        Return com object
-        :return: com object
+        Return com object wrapped by Range object
+        :return: Com instance
         """
         return self._impl
 
+    @property
+    def Worksheet(self):
+        return Sheet(self.Api.Worksheet)
+
+    @property
+    def Address(self) -> str:
+        """
+        Only used cells in Worksheet, this is included in a rectangle area
+        :return:
+        """
+        return self._impl.Address
+
+    @property
+    def Row(self):
+        return self.Api.Row
+
+    @property
+    def Column(self):
+        return self.Api.Column
+
+    @property
+    def RowCount(self):
+        return self._row_count
+
+    @property
+    def ColumnCount(self):
+        return self._column_count
+
+    @property
+    def Rows(self):
+        """
+        All Rows in Worksheet
+        :return:
+        """
+        return Rows(self._impl.Rows)
+
+    @property
+    def Columns(self):
+        """
+        All Columns in Worksheet
+        :return:
+        """
+        return Columns(self._impl.Columns)
+
+    @property
+    def Count(self):
+        return self._impl.Count
+
+    @property
+    def Text(self):
+        """
+        Return Text of a cell in the Range
+        :return: Value
+        """
+        return self.Api.Text
+
+    @property
+    def Value(self):
+        """
+        Return value of cells in the Range
+        :return: Value
+        """
+        return self.Api.Value
+
+    @Value.setter
+    def Value(self, value):
+        """
+        Set Value of Range
+        :return: NA
+        """
+        self.Api.Value = value
+
+    def __call__(self, *args, **kwargs):
+        """
+        Returns a Range object that represents the cells in the specified Range. By apply __call__() method to
+        Cells property, which returns this Range object itself, a new Range is generated.
+            Cells(1)
+            Cells(1, 2)
+            Cells((1, 2)) or Cells([1, 2])
+            Cells((1, 2), [3, 4]) or Cells([1, 2], (3, 4))
+            rng[(1, 1), (2, 2)], rng[(1, 1): (2, 2)]    - cells from [1st row, 1st col] to [2nd row, 2nd col]
+        :param args:
+            int - the index of cells in order from left to right and then next row
+            tuple or list - the index tuple with length of 2, and in form of (row, column)/[row, column]
+        :param kwargs: Not used yet
+        :return: Range Object
+        """
+        """
+        Return Range object specified by matrix: (1, 1), ((1, 1)) or ((1, 1), (2, 2))
+        :param matrix: matrix contains the coordinates in tuple or 2d tuple
+        :return: Range object
+        """
+        if len(args) == 0:
+            return Range(self.Api.Cells)
+
+        if len(args) > 2:
+            raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
+
+        if len(args) == 1 or all(isinstance(k, int) for k in args):
+            return Range(self.Api.Cells(*args))
+
+        if any(not isinstance(k, (list, tuple)) for k in args):
+            raise XlError()
+
+        return Range(self.Api.Range(Address(matrix=args).Address))
+
+    def __getitem__(self, indices):
+        """
+        Returns a Range object that represents a Range at an offset to the specified Range. Either by index or offset
+        address or index tuple.
+            rng[1]                                  - first cell
+            rng[1, 2], rng[(1, 2)]                  - cell at [1st row, 2nd col]
+            rng[1: 2]                               - cells include 1st to 2nd
+            rng[(1, 1): (2, 2)]                     - cells from (1, 1) to (2, 2)
+            rng["A1"], rng["A:B"], rng["A1:B2"]     - Cell(s) by excel address
+        :param indices:
+            int - the index of cells in order from left to right and then next row
+            str - the address in string, Column index given in letters
+            tuple or list - the index tuple with length of 2, and in form of (row, column)/[row, column]
+        :return: Range Object
+        """
+        if isinstance(indices, int):
+            return self.Item(indices)
+
+        if isinstance(indices, str):
+            return self.Range(indices)
+
+        if isinstance(indices, slice):
+            if indices.step:
+                raise XlError('Slice step can not be applied to range object.')
+
+            if all(isinstance(p, (tuple, list)) for p in (indices.start, indices.stop) if p):
+                if indices.start:
+                    ep1 = Range.Coordinates(indices.start, row_count=self.RowCount, column_count=self.ColumnCount)
+                else:
+                    ep1 = (1, 1)
+
+                if indices.stop:
+                    ep2 = Range.Coordinates(indices.stop, row_count=self.RowCount, column_count=self.ColumnCount)
+                else:
+                    ep2 = (self.RowCount, self.ColumnCount)
+
+                if ep1[0] + ep2[0] - 1 > self.RowCount:
+                    raise XlError('Index of row out of range.')
+
+                if ep1[1] + ep2[1] - 1 > self.ColumnCount:
+                    raise XlError('Index of column out of range.')
+
+                matrix = ((min(ep1[0], ep2[0]), min(ep1[1], ep2[1])), (max(ep1[0], ep2[0]), max(ep1[1], ep2[1])))
+
+                return Range(self.Api.Range(Address(matrix=matrix).Address))
+
+        raise XlError('Use int, str or slice(tuple(int, int): tuple(int, int)) as subscriber.')
+
+    def __len__(self):
+        """
+        Return the Count
+        :return:
+        """
+        return self.Count
+
+    def __iter__(self):
+        """
+        Return an iterator for cells in Range
+        :return: Range Object
+        """
+        for i in range(self.Count):
+            yield Range(self.Api.Item(i + 1))
+
+    @staticmethod
+    def Coordinates(*coord, row: int = 1, column: int = 1, row_count: int = 0, column_count: int = 0) -> tuple:
+        if not any(coord):
+            return row, column
+
+        if len(coord) == 1:
+            if isinstance(coord[0], (tuple, list)) and len(coord[0]) == 2:
+                row, column = coord[0]
+            else:
+                raise XlError('Coordinate should be 2 dimension vector.')
+
+        if len(coord) == 2:
+            if all(isinstance(c, int) for c in coord):
+                row, column = coord
+            else:
+                raise XlError('Coordinate should be 2 dimension vector.')
+
+        if len(coord) > 2:
+            raise XlError('Coordinate should be 2 int numbers standalone or in a tuple.')
+
+        if row_count:
+            if row < -row_count or row > row_count:
+                raise XlError('row coordinate should be in +/- [1, row_count]')
+
+            if -row_count <= row < 0:
+                row += (row_count + 1)
+
+        if column_count:
+            if column < -column_count or column > column_count:
+                raise XlError('row coordinate should be in +/- [1, row_count]')
+
+            if -column_count <= column < 0:
+                column += (column_count + 1)
+
+        return row, column
+
+    def Range(self, *endpoints):
+        """
+        Returns a Range object that represents a Range at an offset to the specified Range. Either by index or offset
+            address or index tuple. Example:
+            Range(rng, rng)
+            Rnage('A1:B2')
+        :param endpoints: accept a list of endpoints, either in address format or a couple of Range objects
+            str - the address in string, Column index given in letters
+            tuple or list - the index tuple with length of 2, with 2 Range objects indicates the endpoints
+        :return: Range Object
+        """
+        if all(isinstance(ep, Range) for ep in endpoints):
+            if len(endpoints) == 2:
+                return Range(self.Api.Range(endpoints[0].Api, endpoints[1].Api))
+            else:
+                raise XlError('Must be 2 Range objects as endpoints.')
+
+        return Range(self.Api.Range(*endpoints))
+
+    def Cells(self, *coords):
+        """
+        Returns a Range object that represents a cell in the specified Range. This cell could be accessed by following
+        ways:
+            Cells(1)    - The 1st cell in Range
+            Cells(1, 2) - The cell at row 1 Colmumn 2
+        :param coords: the coordinates of the cell to access, in order from left to right, and then down
+            Range.Cells(1) returns the upper-left cell in the Range.
+            Range.Cells(2) returns the cell immediately to the right of the upper-left cell.
+        :return: Range Object it self
+        """
+        if len(coords) == 0:
+            return Range(self.Api.Cells)
+
+        if len(coords) > 2:
+            raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
+
+        if any(not isinstance(k, int) for k in coords):
+            raise XlError('Cells method only accepts int as input.')
+
+        return Range(self.Api.Cells(*coords))
+
+    def Item(self, *coords):
+        """
+        Returns a Range object that represents a Range at an offset to the specified Range, Note the basic unit to
+        count is not limited to single cell, it could also be a row, a column, depending on how this Range object is
+        generated. *** This is different behavior compare with __call__ method.
+            Item(1)
+            Item(1, 2)
+        :param coords: the coordinates of the cell to access, in order from left to right, and then down
+            Range.Cells(1) returns the upper-left cell in the Range.
+            Range.Cells(2) returns the cell immediately to the right of the upper-left cell.
+        :return: Range Object
+        """
+        if len(coords) == 0:
+            raise XlError()
+
+        if len(coords) > 2:
+            raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
+
+        if not all(isinstance(k, int) for k in coords):
+            raise XlError('')
+
+        return Range(self.Api.Item(*coords))
+
+    @property
+    def Color(self):
+        if self.Api.Interior.ColorIndex == ColorIndex.xlColorIndexNone:
+            return None
+        else:
+            return int_to_rgb(self.Api.Interior.Color)
+
+    @Color.setter
+    def Color(self, color_or_rgb):
+        if color_or_rgb is None:
+            self.Api.Interior.ColorIndex = ColorIndex.xlColorIndexNone
+        elif isinstance(color_or_rgb, int):
+            self.Api.Interior.Color = color_or_rgb
+        else:
+            self.Api.Interior.Color = rgb_to_int(color_or_rgb)
+
+
+class Sheet(Range):
+    """
+    Class represents Worksheet object in Workbook
+    """
     @property
     def Application(self) -> App:
         """
@@ -287,50 +581,12 @@ class Sheet(object):
         self.Api.Name = name
 
     @property
-    def Cells(self):
-        """
-        All cells in Worksheet, not only those currently used
-        :return:
-        """
-        return Range(self.Api.Cells)
-
-    @property
     def UsedRange(self):
         """
         Only used cells in Worksheet, this is included in a rectangle area
         :return:
         """
         return Range(self.Api.UsedRange)
-
-    @property
-    def Columns(self):
-        """
-        All Columns in Worksheet
-        :return:
-        """
-        return Columns(self.Api.Columns)
-
-    @property
-    def Rows(self):
-        """
-        All Rows in Worksheet
-        :return:
-        """
-        return Rows(self.Api.Rows)
-
-    def Range(self, *endpoints):
-        """
-        Returns a Range object that represents a Range at an offset to the specified Range. Either by index or offset
-            address or index tuple
-        :param endpoints: accept a list of endpoints, either in address format or a couple of Range objects
-            str - the address in string, Column index given in letters
-            tuple or list - the index tuple with length of 2, with 2 Range objects indicates the endpoints
-        :return: Range Object
-        """
-        if all(isinstance(ep, str) for ep in endpoints):
-            return Range(self.Api.Range(*endpoints))
-
-        return self.Cells.Range(*endpoints)
 
 
 class Sheets(object):
@@ -400,260 +656,6 @@ class Sheets(object):
         return Book(self.Open(file_name))
 
 
-class Range(object):
-    """
-    Range object
-    """
-    def __init__(self, impl):
-        self._impl = impl
-
-    @property
-    def Api(self):
-        """
-        Return com object wrapped by Range object
-        :return: Com instance
-        """
-        return self._impl
-
-    @property
-    def Worksheet(self):
-        return Sheet(self.Api.Worksheet)
-
-    @property
-    def Address(self) -> str:
-        """
-        Only used cells in Worksheet, this is included in a rectangle area
-        :return:
-        """
-        return self._impl.Address
-
-    @property
-    def Row(self):
-        return self.Api.Row
-
-    @property
-    def Column(self):
-        return self.Api.Column
-
-    @property
-    def Rows(self):
-        """
-        All Rows in Worksheet
-        :return:
-        """
-        return Rows(self._impl.Rows)
-
-    @property
-    def Columns(self):
-        """
-        All Columns in Worksheet
-        :return:
-        """
-        return Columns(self._impl.Columns)
-
-    @property
-    def Cells(self):
-        """
-        Returns a Range object that represents the cells in the specified Range.
-        :return: Range Object it self
-        """
-        return Range(self.Api.Cells)
-
-    @property
-    def Count(self):
-        return self._impl.Count
-
-    @property
-    def Text(self):
-        """
-        Return Text of a cell in the Range
-        :return: Value
-        """
-        return self.Api.Text
-
-    @property
-    def Value(self):
-        """
-        Return value of cells in the Range
-        :return: Value
-        """
-        return self.Api.Value
-
-    @Value.setter
-    def Value(self, value):
-        """
-        Set Value of Range
-        :return: NA
-        """
-        self.Api.Value = value
-
-    def __call__(self, *matrix, **kwargs):
-        """
-        Returns a Range object that represents the cells in the specified Range. By apply __call__() method to
-        Cells property, which returns this Range object itself, a new Range is generated.
-            Cells(1)
-            Cells(1, 2)
-            Cells((1, 2)) or Cells([1, 2])
-            Cells((1, 2), [3, 4]) or Cells([1, 2], (3, 4))
-        :param matrix:
-            int - the index of cells in order from left to right and then next row
-            tuple or list - the index tuple with length of 2, and in form of (row, column)/[row, column]
-        :param kwargs: Not used yet
-        :return: Range Object
-        """
-        if matrix:
-            return self.MatrixCells(matrix)
-        else:
-            return self
-
-    def __getitem__(self, key):
-        """
-        Returns a Range object that represents a Range at an offset to the specified Range. Either by index or offset
-        address or index tuple.
-            rng[1]                                      - first cell
-            rng[1, 2], rng[(1, 2)],                     - cell at [1st row, 2nd col]
-            rng[(1, 1), (2, 2)], rng[(1, 1): (2, 2)]    - cells from [1st row, 1st col] to [2nd row, 2nd col]
-            rng[1: 2]                                   - cells include 1st to 2nd
-            rng["A1"], rng["A:B"], rng["A1:B2"]         - Cell(s) by excel address
-        :param key:
-            int - the index of cells in order from left to right and then next row
-            str - the address in string, Column index given in letters
-            tuple or list - the index tuple with length of 2, and in form of (row, column)/[row, column]
-        :return: Range Object
-        """
-        if isinstance(key, (list, tuple)):
-            return self.MatrixCells(key)
-
-        if isinstance(key, slice):
-            return self.Slice(key)
-
-        if isinstance(key, str):
-            return self.Range(key)
-
-        return self.Item(key)
-
-    def __len__(self):
-        """
-        Return the Count
-        :return:
-        """
-        return self.Count
-
-    def __iter__(self):
-        """
-        Return an iterator for cells in Range
-        :return: Range Object
-        """
-        for i in range(self.Count):
-            yield Range(self.Api.Item(i + 1))
-
-    def Slice(self, index: slice):
-        """
-        Return Range abject specified by Slice
-        :param index: Slice object
-        :return: Range object
-        """
-        if index.start:
-            if isinstance(index.start, (tuple, list)):
-                ep_l = self.Cells(index.start)
-            else:
-                if not isinstance(index.start, int):
-                    raise XlError('Use [int: int] slice syntax.')
-                ep_l = self.Item(index.start)
-        else:
-            ep_l = self.Item(1)
-
-        if index.stop:
-            if isinstance(index.stop, (tuple, list)):
-                ep_r = self.Cells(index.stop)
-            else:
-                if not isinstance(index.start, int):
-                    raise XlError('Use [int: int] slice syntax.')
-                ep_r = self.Item(index.stop)
-        else:
-            ep_r = self.Item(self.Count)
-
-        if index.step:
-            raise XlError('Slice step can not be applied to range object.')
-
-        return self.Worksheet.Range(ep_l, ep_r)
-
-    def MatrixCells(self, matrix: list or tuple):
-        """
-        Return Range object specified by matrix: (1, 1), ((1, 1)) or ((1, 1), (2, 2))
-        :param matrix: matrix contains the coordinates in tuple or 2d tuple
-        :return: Range object
-        """
-        if len(matrix) > 2:
-            raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
-
-        if all(isinstance(k, int) for k in matrix):
-            return Range(self.Api.Cells(*matrix))
-
-        if any(not isinstance(n, int) for n in matrix[0]):
-            raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
-
-        if len(matrix) == 2:
-            if len(matrix[1]) != 2 or any(not isinstance(c, int) for c in matrix[1]):
-                raise XlError('Use (int, int)[, (int, int)] matrix syntax.')
-
-            return Range(self.Api.Range(self._impl.Cells(*matrix[0]), self._impl.Cells(*matrix[1])))
-
-        return Range(self.Api.Cells(*matrix[0]))
-
-    def Range(self, *endpoints):
-        """
-        Returns a Range object that represents a Range at an offset to the specified Range. Either by index or offset
-            address or index tuple
-        :param endpoints: accept a list of endpoints, either in address format or a couple of Range objects
-            str - the address in string, Column index given in letters
-            tuple or list - the index tuple with length of 2, with 2 Range objects indicates the endpoints
-        :return: Range Object
-        """
-        if all(isinstance(ep, Range) for ep in endpoints):
-            if len(endpoints) == 2:
-                return Range(self.Api.Range(endpoints[0].Api, endpoints[1].Api))
-            else:
-                raise XlError('Must be 2 Range objects as endpoints.')
-
-        return Range(self.Api.Range(*endpoints))
-
-    def Item(self, row: int, column: int = 0):
-        """
-        Returns a Range object that represents a Range at an offset to the specified Range, Note the basic unit to
-        count is not limited to single cell, it could also be a row, a column, depending on how this Range object is
-        generated. *** This is different behavior aompare with __call__ method.
-            Item(1)
-            Item(1, 2)
-        :param row: the index number of the cell you want to access, in order from left to right, and then down
-            Range.Item(1) returns the upper-left cell in the Range.
-            Range.Item(2) returns the cell immediately to the right of the upper-left cell.
-        :param column: Optional, A number or string that indicates the column number of the cell you want to access,
-            starting with either 1 or "A" for the first column in the Range.
-        :return: Range Object
-        """
-        if column:
-            return Range(self.Api.Item(row, column))
-
-        return Range(self.Api.Item(row))
-
-    @property
-    def Color(self):
-        if self.Api.Interior.ColorIndex == ColorIndex.xlColorIndexNone:
-            return None
-        else:
-            return int_to_rgb(self.Api.Interior.Color)
-
-    @Color.setter
-    def Color(self, color_or_rgb):
-        if color_or_rgb is None:
-            self.Api.Interior.ColorIndex = ColorIndex.xlColorIndexNone
-        elif isinstance(color_or_rgb, int):
-            self.Api.Interior.Color = color_or_rgb
-        else:
-            self.Api.Interior.Color = rgb_to_int(color_or_rgb)
-
-
 class Rows(Range):
     """
     Object represents a collection of Rows in Range
@@ -662,15 +664,60 @@ class Rows(Range):
         super().__init__(impl)
 
     def __call__(self, *args, **kwargs):
-        rng = super().__call__(*args)
-        rows = rng.Api.Rows
-        if rows.Count > 1:
-            return Rows(rows)
-        return rng
+        if len(args) == 1 and isinstance(args[0], int):
+            return Rows(self.Api.Rows(args[0]))
+
+        return super().__call__(*args)
 
     def __iter__(self):
+        """
+        Return an iterator for cells in Range
+        :return: Range Object
+        """
         for i in range(self.Count):
-            yield self.Item(i + 1)
+            yield Rows(self.Api.Item(i + 1))
+
+    def __getitem__(self, indices):
+        """
+        Return a Range object represents the specified range in worksheet. Depending on the different input parameters,
+        Rows or Range object may returned. For example:
+            rows[1]                 - will return the 1st row in range
+            rows[2: 5]              - will return a Rows object including a subset of rows, from row 2 to row 5
+            rows['2:5']             - will also return a subset of rows
+            rows[(1, 1), (2, 2)[    - will return a Range object represents subset cells of Range(Rows)
+                                      in the rectangle: row 1 col 1 to row 2 col 2
+            rows['A1:B2']           - will return a Range object represents subset cells of Range(Rows)
+                                      in the rectangle: row 1 col 1 to row 2 col 2
+        :param indices: the indices used to specify the range or rows
+        :return:
+        """
+        if isinstance(indices, int):
+            return self.Item(indices)
+
+        if isinstance(indices, str):
+            addr = Address(addr=indices)
+            if addr.IsRow:
+                if addr.Row + addr.RowCount > self.RowCount:
+                    raise XlError('Index of row out of range.')
+
+                return Rows(self.Api.Rows(str))
+
+            return self.Range(indices)
+
+        if isinstance(indices, slice):
+            if any(not isinstance(p, int) for p in (indices.start, indices.stop) if p):
+                return super().__getitem__(indices)
+
+            if indices.step:
+                raise XlError('Slice step can not be applied to range object.')
+
+            if indices.stop > self.RowCount:
+                raise XlError('Index of row out of range.')
+
+            matrix = ((indices.start or 1, 0), (indices.stop or self.Count, 0))
+            return Rows(self.Api.Range(Address(matrix=matrix).Address).Rows)
+
+        raise XlError('')
 
     @property
     def Value(self):
@@ -688,6 +735,9 @@ class Rows(Range):
         """
         self.Api.Rows.Value = value
 
+    def Item(self, item):
+        return Rows(self.Api.Rows(item))
+
 
 class Columns(Range):
     """
@@ -696,15 +746,63 @@ class Columns(Range):
 
     def __init__(self, impl):
         super().__init__(impl)
-        self._impl = impl
 
     def __call__(self, *args, **kwargs):
-        rng = super().__call__(*args)
-        return rng.Columns
+        if len(args) == 1 and isinstance(args[0], int):
+            return Columns(self.Api.Columns(args[0]))
+
+        return super().__call__(*args)
 
     def __iter__(self):
+        """
+        Return an iterator for cells in Range
+        :return: Range Object
+        """
         for i in range(self.Count):
-            yield Range(self.Api.Columns(i + 1).Cells)
+            yield Columns(self.Api.Item(i + 1))
+
+    def __getitem__(self, indices):
+        """
+        Return a Range object represents the specified range in worksheet. Depending on the different input parameters,
+        Columns or Range object may returned. For example:
+            columns[1]                  - will return the 1st columns in range
+            columns[2: 5]               - will return a Rows object including a subset of columns,
+                                          from column 2 to column 5
+            columns['2:5']              - will also return a subset of rows
+            columns[(1, 1), (2, 2)[     - will return a Range object represents subset cells of Range(Columns)
+                                          in the rectangle: row 1 col 1 to row 2 col 2
+            columns['A1:B2']            - will return a Range object represents subset cells of Range(Columns)
+                                          in the rectangle: row 1 col 1 to row 2 col 2
+        :param indices: the indices used to specify the range or columns
+        :return:
+        """
+        if isinstance(indices, int):
+            return self.Item(indices)
+
+        if isinstance(indices, str):
+            addr = Address(addr=indices)
+            if addr.IsColumn:
+                if addr.Column + addr.ColumnCount > self.ColumnCount:
+                    raise XlError('Index of column out of range.')
+
+                return Columns(self.Api.Columns(str))
+
+            return self.Range(indices)
+
+        if isinstance(indices, slice):
+            if any(not isinstance(p, int) for p in (indices.start, indices.stop) if p):
+                return super().__getitem__(indices)
+
+            if indices.step:
+                raise XlError('Slice step can not be applied to range object.')
+
+            if indices.stop > self.RowCount:
+                raise XlError('Index of column out of range.')
+
+            matrix = ((0, indices.start or 1), (0, indices.stop or self.Count))
+            return Columns(self.Api.Range(Address(matrix=matrix).Address).Columns)
+
+        raise XlError('')
 
     @property
     def Value(self):
@@ -721,3 +819,6 @@ class Columns(Range):
         :return: NA
         """
         self.Api.Columns.Value = value
+
+    def Item(self, item):
+        return Columns(self.Api.Columns(item))

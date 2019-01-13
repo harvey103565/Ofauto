@@ -61,6 +61,14 @@ class Address(object):
     def Address(self):
         return self._addr
 
+    @property
+    def IsRow(self):
+        return not self._matrix[0][1] or not (self._matrix[1] and self._matrix[1][1])
+
+    @property
+    def IsColumn(self):
+        return not self._matrix[0][0] or not (self._matrix[1] and self._matrix[1][0])
+
     def IndexOf(self, coord: tuple, abs: bool = False) -> int:
         if len(coord) == 2 and all(isinstance(c, int) for c in coord):
             row, col = coord[0], coord[1]
@@ -77,7 +85,7 @@ class Address(object):
 
 
 def Encode(*coords):
-    if not all(len(coord) == 2 for coord in coords):
+    if any(len(coord) != 2 for coord in coords):
         raise XlError('Must offer both row and column index for coordinates.')
 
     address = ''
