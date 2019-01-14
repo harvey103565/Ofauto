@@ -251,11 +251,10 @@ class Range(object):
     """
     Range object
     """
-    def __init__(self, impl, item_step: tuple = None):
+    def __init__(self, impl):
         self._impl = impl
         self._row_count = impl.Rows.Count
         self._column_count = impl.Columns.Count
-        self._item_step = item_step
 
     @property
     def Api(self):
@@ -275,7 +274,7 @@ class Range(object):
         Only used cells in Worksheet, this is included in a rectangle area
         :return:
         """
-        return self._impl.Address
+        return self.Api.Address
 
     @property
     def Row(self):
@@ -700,7 +699,7 @@ class Rows(Range):
                 if addr.Row + addr.RowCount > self.RowCount:
                     raise XlError('Index of row out of range.')
 
-                return Rows(self.Api.Rows(str))
+                return Rows(self.Api.Rows(addr.Address))
 
             return self.Range(indices)
 
@@ -711,10 +710,10 @@ class Rows(Range):
             if indices.step:
                 raise XlError('Slice step can not be applied to range object.')
 
-            if indices.stop > self.RowCount:
+            if indices.stop and indices.stop > self.RowCount:
                 raise XlError('Index of row out of range.')
 
-            matrix = ((indices.start or 1, 0), (indices.stop or self.Count, 0))
+            matrix = ((indices.start or 1, 1), (indices.stop or self.Count, self.ColumnCount))
             return Rows(self.Api.Range(Address(matrix=matrix).Address).Rows)
 
         raise XlError('')
@@ -785,7 +784,7 @@ class Columns(Range):
                 if addr.Column + addr.ColumnCount > self.ColumnCount:
                     raise XlError('Index of column out of range.')
 
-                return Columns(self.Api.Columns(str))
+                return Columns(self.Api.Columns(addr.Address))
 
             return self.Range(indices)
 
@@ -796,10 +795,10 @@ class Columns(Range):
             if indices.step:
                 raise XlError('Slice step can not be applied to range object.')
 
-            if indices.stop > self.RowCount:
+            if indices.stop and indices.stop > self.ColumnCount:
                 raise XlError('Index of column out of range.')
 
-            matrix = ((0, indices.start or 1), (0, indices.stop or self.Count))
+            matrix = ((1, indices.start or 1), (self.RowCount, indices.stop or self.Count))
             return Columns(self.Api.Range(Address(matrix=matrix).Address).Columns)
 
         raise XlError('')

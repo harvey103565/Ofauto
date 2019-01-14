@@ -17,16 +17,15 @@ class Address(object):
 
         if addr:
             self._addr = addr.upper()
-            self._matrix = Decode(self._addr)
 
         if matrix:
-            self._matrix = matrix
-
             if all(isinstance(i, int) for i in matrix) and len(matrix) == 2:
                 self._addr = Encode(matrix)
 
             if all(isinstance(i, (list, tuple)) for i in matrix):
                 self._addr = Encode(*matrix)
+
+        self._matrix = Decode(self._addr)
 
         if not all((self._addr, self._matrix, self._matrix[0])):
             raise XlError('No valid add-ref or matrix assigned.')
@@ -63,11 +62,26 @@ class Address(object):
 
     @property
     def IsRow(self):
-        return not self._matrix[0][1] or not (self._matrix[1] and self._matrix[1][1])
+        return not self._matrix[0][1] or (self._matrix[1] and not self._matrix[1][1])
 
     @property
     def IsColumn(self):
-        return not self._matrix[0][0] or not (self._matrix[1] and self._matrix[1][0])
+        return not self._matrix[0][0] or (self._matrix[1] and not self._matrix[1][0])
+
+    def Resize(self, rows: tuple = (), columns: tuple = ()):
+        matrix = self.Matrix
+
+        coords = [[matrix[0][0], matrix[0][1]], [matrix[1][0], matrix[1][1]]]
+        if rows:
+            coords[0][0] = rows[0]
+            coords[1][0] = rows[1]
+
+        if columns:
+            coords[0][1] = columns[0]
+            coords[1][1] = columns[1]
+
+        self._addr = Encode(*coords)
+        self._matrix = Decode(self._addr)
 
     def IndexOf(self, coord: tuple, abs: bool = False) -> int:
         if len(coord) == 2 and all(isinstance(c, int) for c in coord):
