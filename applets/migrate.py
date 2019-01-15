@@ -76,27 +76,22 @@ class XlMigrator(object):
 
     @staticmethod
     def WorkingCells(sht, key_addr, value_addr):
-        cel_k = sht.Range(key_addr)
-        cel_v = sht.Range(value_addr)
+        cell_key = sht.Range(key_addr)
+        cell_value = sht.Range(value_addr)
 
-        row_kv = [c.Row for r in (cel_k, cel_v) for c in r]
-        if len(set(row_kv)) > 1:
+        row_key_value = [c.Row for r in (cell_key, cell_value) for c in r]
+        if len(set(row_key_value)) > 1:
             raise AppError(r'<KEY> and <VALUE> keywords are not in the same row.')
 
-        used_rng = sht.UsedRange
+        column_key = sorted([c.Column for c in cell_key])
+        column_value = sorted([c.Column for c in cell_value])
 
-        rel_col_k = sorted([c.Column - used_rng.Column + 1 for c in cel_k])
-        rel_col_v = sorted([c.Column - used_rng.Column + 1 for c in cel_v])
-        rel_row_t, rel_row_b = row_kv[0] - used_rng.Row + 1 + 1, used_rng.Rows.Count
-
-        work_rng = used_rng.Cells((rel_row_t, min(rel_col_k + rel_col_v)), (rel_row_b, max(rel_col_k + rel_col_v)))
-
-        for row in work_rng.Rows:
-            yield row[rel_col_k[0]: rel_col_k[-1]], row[rel_col_v[0]: rel_col_v[-1]]
+        for row in range(row_key_value[0] + 1, sht.UsedRange.Rows.Count + 1):
+            yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
 
     def LoadSourceValues(self, sheet, key_addr, value_addr):
         for r in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            key, value = XlMigrator.RowValues(r[0]), XlMigrator.RowValues(r[1])
+            key, value = XlMigrator.RowValues(sheet, *r[0]), XlMigrator.RowValues(sheet, *r[1])
 
             if not any(key) or not any(value):
                 continue
@@ -111,7 +106,7 @@ class XlMigrator(object):
 
     def WriteTargetValues(self, sheet, key_addr, value_addr):
         for r in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            key, value = XlMigrator.RowValues(r[0]), XlMigrator.RowValues(r[1])
+            key, value = XlMigrator.RowValues(sheet, *r[0]), XlMigrator.RowValues(sheet, *r[1])
 
             if not any(key) or key not in self.data:
                 self.UpdateCellRecord(_MISMATCHED_, r[0])
@@ -211,13 +206,9 @@ class XlMigrator(object):
         return summary
 
     @staticmethod
-    def RowValues(row) -> tuple:
-        if len(row) > 1:
-            return tuple(str(v).strip() if v else '' for v in row.Value[0])
-        elif row.Value:
-            return str(row.Value).strip(),
-        else:
-            return ()
+    def RowValues(sheet, *coords) -> tuple:
+        cells = sheet(*coords)
+        return tuple(str(v).strip() if v else '' for v in cells.Value[0])
 
 
 timber.basicConfig(level=timber.INFO,

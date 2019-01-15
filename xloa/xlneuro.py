@@ -716,7 +716,7 @@ class Rows(Range):
             matrix = ((indices.start or 1, 1), (indices.stop or self.Count, self.ColumnCount))
             return Rows(self.Api.Range(Address(matrix=matrix).Address).Rows)
 
-        raise XlError('')
+        raise XlError('Invalid indices type.')
 
     @property
     def Value(self):
@@ -801,7 +801,7 @@ class Columns(Range):
             matrix = ((1, indices.start or 1), (self.RowCount, indices.stop or self.Count))
             return Columns(self.Api.Range(Address(matrix=matrix).Address).Columns)
 
-        raise XlError('')
+        raise XlError('Invalid indices type')
 
     @property
     def Value(self):
