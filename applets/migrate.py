@@ -9,8 +9,10 @@ from sys import argv
 
 from timber import timber
 
-from applets import XlController
-from applets import AppError
+from xloa import Range
+
+from applets.xlcontroller import XlController
+from applets.apperror import AppError
 
 
 _FILLED_IN_ = 'Filled-in'
@@ -90,8 +92,11 @@ class XlMigrator(object):
             yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
 
     def LoadSourceValues(self, sheet, key_addr, value_addr):
-        for r in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            key, value = XlMigrator.RowValues(sheet, *r[0]), XlMigrator.RowValues(sheet, *r[1])
+        for kc, vc in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
+            kr = XlMigrator.Row(sheet, kc)
+            vr = XlMigrator.Row(sheet, vc)
+            key = XlMigrator.RowValues(kr)
+            value = XlMigrator.RowValues(vr)
 
             if not any(key) or not any(value):
                 continue
@@ -105,15 +110,18 @@ class XlMigrator(object):
             timber.info('Find {0}: {1}'.format(key, value))
 
     def WriteTargetValues(self, sheet, key_addr, value_addr):
-        for r in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            key, value = XlMigrator.RowValues(sheet, *r[0]), XlMigrator.RowValues(sheet, *r[1])
+        for kc, vc in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
+            kr = XlMigrator.Row(sheet, kc)
+            vr = XlMigrator.Row(sheet, vc)
+            key = XlMigrator.RowValues(kr)
+            value = XlMigrator.RowValues(vr)
 
             if not any(key) or key not in self.data:
-                self.UpdateCellRecord(_MISMATCHED_, r[0])
+                self.UpdateCellRecord(_MISMATCHED_, vr)
                 continue
 
             if key in self.redundants:
-                self.UpdateCellRecord(_REDUNDANT_, r[0])
+                self.UpdateCellRecord(_REDUNDANT_, vr)
 
             data = self.data[key]
 
@@ -121,31 +129,31 @@ class XlMigrator(object):
                 timber.info('Compare: {0}: <value>{1} vs <new value>{2}, '.format(key, value[i], data[i]))
 
                 if not value[i]:
-                    self.UpdateCellRecord(_FILLED_IN_, r[1][i + 1], data[i])
+                    self.UpdateCellRecord(_FILLED_IN_, vr[i + 1], data[i])
                     continue
 
                 if data[i] == value[i]:
-                    self.UpdateCellRecord(_IGNORED_, r[1][i + 1])
+                    self.UpdateCellRecord(_IGNORED_, vr[i + 1])
                     continue
 
                 if self.over_writing:
-                    self.UpdateCellRecord(_OVERWRITTEN_, r[1][i + 1], data[i])
+                    self.UpdateCellRecord(_OVERWRITTEN_, vr[i + 1], data[i])
                 else:
-                    self.UpdateCellRecord(_DIFFERENT_, r[1][i + 1])
+                    self.UpdateCellRecord(_DIFFERENT_, vr[i + 1])
 
-    def UpdateCellRecord(self, term, row, data=None):
+    def UpdateCellRecord(self, term, cells, data=None):
         self.summary[term] += 1
 
         if not data:
-            value = XlMigrator.RowValues(row)
-            if not any(value):
+            value = XlMigrator.RowValues(cells)
+            if not value:
                 return
         else:
-            row.Value = data
+            cells.Value = data
 
         color_name = self.color_schema[term]
         color_value = color_interpreter[color_name]
-        row.Color = color_value
+        cells.Color = color_value
 
     def GetWorksheet(self, book_name, sheet_name):
         book_sheet = (book_name, sheet_name)
@@ -206,8 +214,14 @@ class XlMigrator(object):
         return summary
 
     @staticmethod
-    def RowValues(sheet, *coords) -> tuple:
-        cells = sheet(*coords)
+    def Row(sheet, coordinates) -> Range:
+        return sheet(*coordinates)
+
+    @staticmethod
+    def RowValues(cells=None) -> tuple or None:
+        if not cells.Value:
+            return None
+
         return tuple(str(v).strip() if v else '' for v in cells.Value[0])
 
 

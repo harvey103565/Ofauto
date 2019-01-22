@@ -12,7 +12,7 @@ class Macro(object):
         self.macro = macro
 
     def run(self, *args):
-        return self._app.Api.Run(self.macro, args)
+        return self._app.Api.Run(self.macro, *args)
 
     __call__ = run
 

@@ -47,7 +47,7 @@ def XlController(*args):
                 ret_value = 2
             finally:
                 exit_call_back = app.Macro('Migration.OnExitCallBack')
-                exit_call_back()
+                exit_call_back(1)
 
             exit(ret_value)
 
