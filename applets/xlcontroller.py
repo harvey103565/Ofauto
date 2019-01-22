@@ -8,6 +8,7 @@ from timber import timber
 
 from os import path
 from sys import exit
+from sys import modules
 
 from xloa import App
 from xloa import XlError
@@ -26,12 +27,9 @@ def XlController(*args):
             timber.exception(e)
 
         def __init__(XlHander):
-            timber.info('XlHandler.__init__()')
             cls.__init__(XlHander, app, xl_sheet)
 
         def __call__(XlHandler, *args, **kwargs):
-            timber.info('XlHandler.__call__({})'.format(repr(cls)))
-
             try:
                 result = cls.__call__(XlHandler, *args, **kwargs)
 
@@ -46,8 +44,12 @@ def XlController(*args):
                 timber.exception(exp)
                 ret_value = 2
             finally:
+                mod_path = modules[cls.__module__].__file__
+                mod_dir = path.dirname(mod_path)
+                mod_name = path.splitext(path.basename(mod_path))[0]
+
                 exit_call_back = app.Macro('Migration.OnExitCallBack')
-                exit_call_back(1)
+                exit_call_back(1, mod_dir, mod_name)
 
             exit(ret_value)
 
