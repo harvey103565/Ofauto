@@ -4,11 +4,11 @@
 
 import json
 import base64
+import types
 
 from sys import argv
 
 from timber import timber
-
 from xloa import Range
 
 from applets.xlcontroller import XlController
@@ -41,6 +41,42 @@ color_values = ((79, 129, 189),         # blue
 color_interpreter = dict(zip(color_names, color_values))
 
 
+def Cells(sht, key_address, value_address):
+    cell_key = sht.Range(key_address)
+    cell_value = sht.Range(value_address)
+
+    row_key_value = [c.Row for r in (cell_key, cell_value) for c in r]
+    if len(set(row_key_value)) > 1:
+        raise AppError(r'<KEY> and <VALUE> keywords are not in the same row.')
+
+    column_key = sorted([c.Column for c in cell_key])
+    column_value = sorted([c.Column for c in cell_value])
+
+    for row in range(row_key_value[0] + 1, sht.UsedRange.Rows.Count + 1):
+        yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
+
+
+def for_every_cell(func):
+    @types.coroutine
+    def wrapper(self, sheet, key_addr, value_addr):
+        cycles = 1
+
+        for kc, vc in Cells(sheet, key_addr, value_addr):
+            kr = XlMigrator.Row(sheet, kc)
+            vr = XlMigrator.Row(sheet, vc)
+            key = XlMigrator.Values(kr)
+            value = XlMigrator.Values(vr)
+
+            func(self, key, kr, value, vr)
+
+            cycles += 1
+            if cycles == 3:
+                yield
+                cycles = 1
+
+    return wrapper
+
+
 @XlController(*argv)
 class XlMigrator(object):
     def __init__(self, app, sheet):
@@ -64,88 +100,63 @@ class XlMigrator(object):
         self.data = dict()
         self.redundants = set()
 
-    def __call__(self, *args, **kwargs):
+    async def __call__(self, *args, **kwargs):
         for instruction in self.sources:
             xls_src = self.GetWorksheet(instruction['book'], instruction['sheet'])
 
-            self.LoadSourceValues(xls_src, instruction['key'], instruction['value'])
+            await self.Read(xls_src, instruction['key'], instruction['value'])
 
         xls_tar = self.GetWorksheet(self.target['book'], self.target['sheet'])
-        self.WriteTargetValues(xls_tar, self.target['key'], self.target['value'])
+        await self.Write(xls_tar, self.target['key'], self.target['value'])
 
         summary = self.MakeSummary()
         return summary
 
-    @staticmethod
-    def WorkingCells(sht, key_addr, value_addr):
-        cell_key = sht.Range(key_addr)
-        cell_value = sht.Range(value_addr)
+    @for_every_cell
+    def Read(self, key, kr, value, vr):
+        if not any(key) or not any(value):
+            return
 
-        row_key_value = [c.Row for r in (cell_key, cell_value) for c in r]
-        if len(set(row_key_value)) > 1:
-            raise AppError(r'<KEY> and <VALUE> keywords are not in the same row.')
+        if key in self.data:
+            self.redundants.add(key)
+            timber.info('Multiple value {0}: {1} vs {2}'.format(key, value, self.data[key]))
+            return
 
-        column_key = sorted([c.Column for c in cell_key])
-        column_value = sorted([c.Column for c in cell_value])
+        self.data[key] = value
+        timber.info('Find {0}: {1}'.format(key, value))
 
-        for row in range(row_key_value[0] + 1, sht.UsedRange.Rows.Count + 1):
-            yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
+    @for_every_cell
+    def Write(self, key, kr, value, vr):
+        if not any(key) or key not in self.data:
+            self.UpdateCellRecord(_MISMATCHED_, kr)
+            return
 
-    def LoadSourceValues(self, sheet, key_addr, value_addr):
-        for kc, vc in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            kr = XlMigrator.Row(sheet, kc)
-            vr = XlMigrator.Row(sheet, vc)
-            key = XlMigrator.RowValues(kr)
-            value = XlMigrator.RowValues(vr)
+        if key in self.redundants:
+            self.UpdateCellRecord(_REDUNDANT_, kr)
 
-            if not any(key) or not any(value):
-                continue
+        data = self.data[key]
 
-            if key in self.data:
-                self.redundants.add(key)
-                timber.info('Multiple value {0}: {1} vs {2}'.format(key, value, self.data[key]))
-                continue
+        for i in range(len(value)):
+            timber.info('Compare: {0}: <value>{1} vs <new value>{2}, '.format(key, value[i], data[i]))
 
-            self.data[key] = value
-            timber.info('Find {0}: {1}'.format(key, value))
+            if not value[i]:
+                self.UpdateCellRecord(_FILLED_IN_, vr[i + 1], data[i])
+                return
 
-    def WriteTargetValues(self, sheet, key_addr, value_addr):
-        for kc, vc in XlMigrator.WorkingCells(sheet, key_addr, value_addr):
-            kr = XlMigrator.Row(sheet, kc)
-            vr = XlMigrator.Row(sheet, vc)
-            key = XlMigrator.RowValues(kr)
-            value = XlMigrator.RowValues(vr)
+            if data[i] == value[i]:
+                self.UpdateCellRecord(_IGNORED_, vr[i + 1])
+                return
 
-            if not any(key) or key not in self.data:
-                self.UpdateCellRecord(_MISMATCHED_, vr)
-                continue
-
-            if key in self.redundants:
-                self.UpdateCellRecord(_REDUNDANT_, vr)
-
-            data = self.data[key]
-
-            for i in range(len(value)):
-                timber.info('Compare: {0}: <value>{1} vs <new value>{2}, '.format(key, value[i], data[i]))
-
-                if not value[i]:
-                    self.UpdateCellRecord(_FILLED_IN_, vr[i + 1], data[i])
-                    continue
-
-                if data[i] == value[i]:
-                    self.UpdateCellRecord(_IGNORED_, vr[i + 1])
-                    continue
-
-                if self.over_writing:
-                    self.UpdateCellRecord(_OVERWRITTEN_, vr[i + 1], data[i])
-                else:
-                    self.UpdateCellRecord(_DIFFERENT_, vr[i + 1])
+            if self.over_writing:
+                self.UpdateCellRecord(_OVERWRITTEN_, vr[i + 1], data[i])
+            else:
+                self.UpdateCellRecord(_DIFFERENT_, vr[i + 1])
 
     def UpdateCellRecord(self, term, cells, data=None):
         self.summary[term] += 1
 
         if not data:
-            value = XlMigrator.RowValues(cells)
+            value = XlMigrator.Values(cells)
             if not value:
                 return
         else:
@@ -218,11 +229,26 @@ class XlMigrator(object):
         return sheet(*coordinates)
 
     @staticmethod
-    def RowValues(cells=None) -> tuple or None:
+    def Values(cells=None) -> tuple or None:
         if not cells.Value:
             return None
 
         return tuple(str(v).strip() if v else '' for v in cells.Value[0])
+
+    @staticmethod
+    def Cells(sht, key_addr, value_addr):
+        cell_key = sht.Range(key_addr)
+        cell_value = sht.Range(value_addr)
+
+        row_key_value = [c.Row for r in (cell_key, cell_value) for c in r]
+        if len(set(row_key_value)) > 1:
+            raise AppError(r'<KEY> and <VALUE> keywords are not in the same row.')
+
+        column_key = sorted([c.Column for c in cell_key])
+        column_value = sorted([c.Column for c in cell_value])
+
+        for row in range(row_key_value[0] + 1, sht.UsedRange.Rows.Count + 1):
+            yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
 
 
 timber.basicConfig(level=timber.INFO,
