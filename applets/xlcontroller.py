@@ -56,9 +56,10 @@ def XlController(*args):
             result_call_back = app.Macro('Migration.OnResultCallBack')
 
             try:
+                result = cls.__call__(XlHandler, *args, **kwargs)
                 while True:
-                    result = await cls.__call__(XlHandler, *args, **kwargs)
-                    pass
+                    result.send(None)
+                    print('From await.')
                     # result_call_back(result)
             except StopIteration:
                 XlHandler.MakeSummary()
