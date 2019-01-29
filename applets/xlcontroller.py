@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import json
-import asyncio
-
-from functools import wraps
 
 from pythoncom import com_error
 from timber import timber
@@ -34,7 +31,9 @@ def XlController(*args):
 
         def __call__(XlHandler, *args, **kwargs):
             try:
-                asyncio.run(__wrapper__(XlHandler, *args, **kwargs))
+                result_call_back = app.Macro('Migration.OnResultCallBack')
+                for result in cls.__call__(XlHandler, *args, **kwargs):
+                    result_call_back(result)
                 ret_value = 0
             except com_error as exp:
                 timber.exception(exp)
@@ -51,20 +50,6 @@ def XlController(*args):
                 exit_call_back(1, mod_dir, mod_name)
 
             exit(ret_value)
-
-        async def __wrapper__(XlHandler, *args, **kwargs):
-            result_call_back = app.Macro('Migration.OnResultCallBack')
-
-            try:
-                result = cls.__call__(XlHandler, *args, **kwargs)
-                while True:
-                    result.send(None)
-                    print('From await.')
-                    # result_call_back(result)
-            except StopIteration:
-                XlHandler.MakeSummary()
-
-            return 0
 
         return type('XlHandler', (cls,), {'__init__': __init__, '__call__': __call__})
 

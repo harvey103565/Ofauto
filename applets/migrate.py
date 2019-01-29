@@ -4,7 +4,7 @@
 
 import json
 import base64
-import types
+from functools import wraps
 
 from sys import argv
 
@@ -15,13 +15,13 @@ from applets.xlcontroller import XlController
 from applets.apperror import AppError
 
 
-_FILLED_IN_ = 'Filled-in'
-_OVERWRITTEN_ = 'Overwritten'
-_DIFFERENT_ = 'Different'
-_MISMATCHED_ = 'Mismatched'
-_UNUSED_ = 'Unused'
-_IGNORED_ = 'Ignored'
-_REDUNDANT_ = 'Redundant'
+_FILLED_IN_ = '迁移'
+_OVERWRITTEN_ = '改写'
+_DIFFERENT_ = '差异'
+_MISMATCHED_ = '失配'
+_UNUSED_ = '无效'
+_IGNORED_ = '忽略'
+_REDUNDANT_ = '冗余'
 
 # _UNUSED_ MUST BE the last one in tuple. It is updated at last, in a loop follow the tuple's order,
 #  after all other terms were counted.
@@ -56,25 +56,27 @@ def Cells(sht, key_address, value_address):
         yield ((row, column_key[0]), (row, column_key[-1])), ((row, column_value[0]), (row, column_value[-1]))
 
 
-def for_every_cell(func):
-    @types.coroutine
-    def wrapper(self, sheet, key_addr, value_addr):
-        cycles = 1
+def for_every_cell(count):
+    def decorator(func):
 
-        for kc, vc in Cells(sheet, key_addr, value_addr):
-            kr = XlMigrator.Row(sheet, kc)
-            vr = XlMigrator.Row(sheet, vc)
-            key = XlMigrator.Values(kr)
-            value = XlMigrator.Values(vr)
+        @wraps(func)
+        def wrapper(self, sheet, key_addr, value_addr):
+            cycles = 1
 
-            func(self, key, kr, value, vr)
+            for kc, vc in Cells(sheet, key_addr, value_addr):
+                kr = XlMigrator.Row(sheet, kc)
+                vr = XlMigrator.Row(sheet, vc)
+                key = XlMigrator.Values(kr)
+                value = XlMigrator.Values(vr)
 
-            cycles += 1
-            if cycles == 3:
-                yield
-                cycles = 1
+                func(self, key, kr, value, vr)
 
-    return wrapper
+                if cycles % count == 0:
+                    yield cycles
+
+                cycles += 1
+        return wrapper
+    return decorator
 
 
 @XlController(*argv)
@@ -100,19 +102,18 @@ class XlMigrator(object):
         self.data = dict()
         self.redundants = set()
 
-    async def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs):
         for instruction in self.sources:
             xls_src = self.GetWorksheet(instruction['book'], instruction['sheet'])
 
-            await self.Read(xls_src, instruction['key'], instruction['value'])
+            for cycle in self.Read(xls_src, instruction['key'], instruction['value']):
+                yield self.MakeSummary()
 
         xls_tar = self.GetWorksheet(self.target['book'], self.target['sheet'])
-        await self.Write(xls_tar, self.target['key'], self.target['value'])
+        for cycle in self.Write(xls_tar, self.target['key'], self.target['value']):
+            yield self.MakeSummary()
 
-        summary = self.MakeSummary()
-        return summary
-
-    @for_every_cell
+    @for_every_cell(10)
     def Read(self, key, kr, value, vr):
         if not any(key) or not any(value):
             return
@@ -125,7 +126,7 @@ class XlMigrator(object):
         self.data[key] = value
         timber.info('Find {0}: {1}'.format(key, value))
 
-    @for_every_cell
+    @for_every_cell(10)
     def Write(self, key, kr, value, vr):
         if not any(key) or key not in self.data:
             self.UpdateCellRecord(_MISMATCHED_, kr)
@@ -195,34 +196,35 @@ class XlMigrator(object):
             num = self.summary[k]
 
         self.summary[_UNUSED_] = unused
+        return self.summary
 
-        summary = (total + mis, mis, total,
-                   self.summary[_FILLED_IN_],
-                   self.summary[_OVERWRITTEN_],
-                   self.summary[_DIFFERENT_],
-                   self.summary[_IGNORED_],
-                   unused,
-                   rdd)
-
-        timber.info(
-            """
-            
-            ------------------------------------------
-            运行结果：
-                共计处理数据{0}条，
-                    目标表格中{1}条未能匹配源数据
-                    从源数据发现数据{2}条
-                        填入数据{3}条
-                        改写数据{4}条
-                        保留有差别的数据{5}条
-                        跳过不变的数据{6}条
-                        未使用的数据{7}条
-                        ---
-                        另有{8}条数据存在多值
-            ------------------------------------------
-            """.format(*summary))
-
-        return summary
+        # summary = (total + mis, mis, total,
+        #            self.summary[_FILLED_IN_],
+        #            self.summary[_OVERWRITTEN_],
+        #            self.summary[_DIFFERENT_],
+        #            self.summary[_IGNORED_],
+        #            unused,
+        #            rdd)
+        #
+        # timber.info(
+        #     """
+        #
+        #     ------------------------------------------
+        #     运行结果：
+        #         共计处理数据{0}条，
+        #             目标表格中{1}条未能匹配源数据
+        #             从源数据发现数据{2}条
+        #                 填入数据{3}条
+        #                 改写数据{4}条
+        #                 保留有差别的数据{5}条
+        #                 跳过不变的数据{6}条
+        #                 未使用的数据{7}条
+        #                 ---
+        #                 另有{8}条数据存在多值
+        #     ------------------------------------------
+        #     """.format(*summary))
+        #
+        # return summary
 
     @staticmethod
     def Row(sheet, coordinates) -> Range:
