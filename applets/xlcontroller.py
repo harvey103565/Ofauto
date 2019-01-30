@@ -33,7 +33,7 @@ def XlController(*args):
             try:
                 result_call_back = app.Macro('Migration.OnResultCallBack')
                 for result in cls.__call__(XlHandler, *args, **kwargs):
-                    result_call_back(result)
+                    result_call_back(0, json.dumps(result))
                 ret_value = 0
             except com_error as exp:
                 timber.exception(exp)

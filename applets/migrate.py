@@ -138,7 +138,7 @@ class XlMigrator(object):
         data = self.data[key]
 
         for i in range(len(value)):
-            timber.info('Compare: {0}: <value>{1} vs <new value>{2}, '.format(key, value[i], data[i]))
+            timber.info('Compare: {0}: <value> {1} vs <new value> {2}, '.format(key, value[i], data[i]))
 
             if not value[i]:
                 self.UpdateCellRecord(_FILLED_IN_, vr[i + 1], data[i])
@@ -233,7 +233,10 @@ class XlMigrator(object):
     @staticmethod
     def Values(cells=None) -> tuple or None:
         if not cells.Value:
-            return None
+            return tuple()
+
+        if cells.Count == 1:
+            return str(cells.Value).strip(),
 
         return tuple(str(v).strip() if v else '' for v in cells.Value[0])
 
